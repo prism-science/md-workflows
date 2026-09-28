@@ -49,6 +49,33 @@ jobs:
         # Contract + CLI tests are gmx-free, so they run on the hosted runner.
         run: pytest -q
 
+  # The image's lunus env pins Python 3.10 (Dockerfile.base) while `lint` runs on 3.12, so
+  # 3.11+-only code -- an unconditional `import tomllib` -- once passed CI and broke the image's
+  # CLI. A separate job rather than a matrix on `lint` leaves that job's check name unchanged for
+  # any branch-protection rule that requires it.
+  test-py310:
+    name: Tests (Python 3.10, as in the image)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install package
+        run: |
+          python -m pip install --upgrade pip
+          pip install '.[dev]'
+
+      - name: Run tests
+        run: pytest -q
+
+      - name: Check the CLI starts
+        run: md-workflows --help > /dev/null
+
   build-check:
     name: Dockerfile build checks (no push)
     runs-on: ubuntu-latest
