@@ -21,6 +21,9 @@ from pydantic import BaseModel, ConfigDict, Field
 
 Offload = Literal["auto", "cpu", "gpu"]
 
+# Atom/residue numbering of a propagated supercell; see ``core.crystal``.
+CrystalNumbering = Literal["auto", "continuous", "per-cell"]
+
 # Keys for the per-invocation mdrun profiles. Each GROMACS mdrun call in the pipeline
 # looks up its profile by one of these names.
 RUN_PROFILE_KEYS = (
@@ -106,6 +109,13 @@ class CrystalParams(BaseModel):
     ix: int = 1
     iy: int | None = None  # falls back to ix
     iz: int | None = None  # falls back to ix
+    spacegroup: str | None = None  # None => take it from the CRYST1 record
+    # 1-based reordering of the space group's symmetry operations, e.g. [1, 2, 4, 3] to
+    # reproduce the chain labelling of the old ChimeraX route; see ``core.crystal``.
+    op_order: list[int] | None = None
+    numbering: CrystalNumbering = "auto"
+    # Retained so existing configs and --chimerax-exec keep validating; the expansion is
+    # gemmi-based now and never launches ChimeraX.
     chimerax_exec: str = "chimerax"
 
 

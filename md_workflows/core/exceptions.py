@@ -55,6 +55,16 @@ class StepToolError(MDWorkflowError):
         super().__init__("\n".join(parts))
 
 
+class CrystalSymmetryError(MDWorkflowError):
+    """A PDB lacks the symmetry metadata needed to build the crystal, or the requested
+    crystal cannot be written as a PDB file.
+
+    Raised by the gemmi primitives in ``core.crystal`` — missing/unknown CRYST1 space
+    group, a bad symmetry-operation order, or a supercell whose numbering would not fit
+    the fixed-column serial/resSeq fields.
+    """
+
+
 class GmxOutputParseError(MDWorkflowError):
     """A value expected in GROMACS stdout/log (e.g. a molecule count) was not found.
 

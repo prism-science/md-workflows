@@ -90,6 +90,15 @@ run_profiles:
   min:   { ntomp: 16, nb: gpu, pme: cpu, bonded: cpu, tunepme: false }
 ```
 
+`make_crystal` expands the asymmetric unit to the unit cell and propagates the lattice
+with [gemmi](https://gemmi.readthedocs.io) (`md_workflows/core/crystal.py`) instead of
+ChimeraX and AmberTools `PropPDB`, so neither is needed at run time. `crystal.spacegroup`
+overrides the CRYST1 space group, `crystal.op_order` reorders the symmetry operations
+(e.g. `[1, 2, 4, 3]` reproduces the chain labelling of the old ChimeraX route), and
+`crystal.numbering` picks the supercell's atom/residue numbering — `continuous`
+(PropPDB-compatible), `per-cell` (counters restart in every cell, for supercells past
+the 99999-atom / 9999-residue PDB fields) or `auto`.
+
 ```bash
 md-workflows -w run_dir -c config.yaml run-pipeline
 md-workflows -w run_dir -c config.yaml --resume run-pipeline   # skip completed steps
