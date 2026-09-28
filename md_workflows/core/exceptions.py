@@ -28,7 +28,7 @@ class MissingInputError(MDWorkflowError):
 
 
 class StepToolError(MDWorkflowError):
-    """An external tool (gmx, tleap, ChimeraX, AmberTools, ...) exited non-zero."""
+    """An external tool (gmx, tleap, AmberTools, ...) exited non-zero."""
 
     def __init__(
         self,

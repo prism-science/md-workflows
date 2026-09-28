@@ -11,7 +11,7 @@ without rebuilding the base:
 
 | Stage | Dockerfile | Contents |
 |-------|-----------|----------|
-| base    | `Dockerfile.base`    | CUDA 12.6 devel toolchain, micromamba/conda `lunus` env, lunus, ChimeraX. Architecture-neutral. |
+| base    | `Dockerfile.base`    | CUDA 12.6 devel toolchain, micromamba/conda `lunus` env, lunus. Architecture-neutral. |
 | gromacs | `Dockerfile.gromacs` | GROMACS (CUDA, tuned for H100 / AVX-512 by default) + the `md_workflows` package. The consumable image. |
 
 (An Astera-specific `Dockerfile.actl` overlay adds workspace conventions on top of `gromacs`. It

@@ -1,6 +1,6 @@
 # ==================== md-workflows base (stage 1 of 3) ====================
 # Architecture-neutral foundation: CUDA 12.6 *devel* toolchain + the full scientific
-# conda stack (AmberTools / DIALS / cctbx / mdtraj / …), lunus, and ChimeraX. This layer
+# conda stack (AmberTools / DIALS / cctbx / mdtraj / …) and lunus. This layer
 # carries everything that is portable across compute; the non-portable GROMACS compile and
 # the md-workflows app are added downstream in Dockerfile.gromacs, and Astera workspace
 # conventions in Dockerfile.actl.
@@ -106,33 +106,9 @@ RUN $MAMBA_EXE remove -n lunus -y scons \
     rm -rf /opt/packages/lunus/.git; \
     true
 
-# ---------- ChimeraX ----------
-ARG CHIMERAX_URL="https://www.cgl.ucsf.edu/chimerax/cgi-bin/secure/chimerax-get.py?file=current/ubuntu-22.04/chimerax-daily.deb"
-# The download is a two-step token dance behind www.cgl.ucsf.edu (POST choice=Accept ->
-# meta-refresh URL carrying a session ident -> follow with the cookie). Run it under bash with
-# `set -euo pipefail` and `curl -fsS` so a failed request aborts loudly instead of feeding an
-# empty body into grep -- a silent `curl -s | grep` masks both curl's exit code (pipe takes the
-# last command's status) and the real error (grep just exits 1 on no match), which is exactly how
-# this step failed in CI with a bare "exit code 1" and zero diagnostics.
-RUN apt-get update \
-    && bash -euo pipefail -c '\
-url="$1"; \
-echo "ChimeraX: requesting download token..."; \
-resp="$(curl -fsS --retry 5 --retry-all-errors --retry-delay 5 --connect-timeout 30 -c /tmp/cx_cookies -d "choice=Accept" "$url")"; \
-redirect="$(printf "%s" "$resp" | grep -oP "url=\K[^\"]*" | head -n1 || true)"; \
-if [ -z "$redirect" ]; then echo "ChimeraX ERROR: no download URL in response (network block or page change). First 2KB:"; printf "%s" "$resp" | head -c 2048; echo; exit 1; fi; \
-echo "ChimeraX: downloading $redirect"; \
-curl -fsS --retry 5 --retry-all-errors --retry-delay 5 --connect-timeout 30 -b /tmp/cx_cookies -o /tmp/chimerax.deb "https://www.cgl.ucsf.edu$redirect"; \
-dpkg-deb --info /tmp/chimerax.deb >/dev/null 2>&1 || { echo "ChimeraX ERROR: downloaded file is not a valid .deb. First 512B:"; head -c 512 /tmp/chimerax.deb; echo; exit 1; }; \
-apt-get install -y /tmp/chimerax.deb \
-' _ "${CHIMERAX_URL}" \
-    && rm -f /tmp/chimerax.deb /tmp/cx_cookies \
-    && rm -rf /var/lib/apt/lists/* \
-    && mkdir -p /home/dev/.config/ChimeraX
-
 # ---------- interactive shells & pager ----------
 # Kept out of the build-time list at the top so runtime additions don't invalidate the unpinned
-# conda solve and ChimeraX fetch above. tcsh also provides /bin/csh (via update-alternatives).
+# conda solve above. tcsh also provides /bin/csh (via update-alternatives).
 RUN apt-get update && apt-get install -y --no-install-recommends \
         less \
         tcsh \
