@@ -28,7 +28,7 @@ class MissingInputError(MDWorkflowError):
 
 
 class StepToolError(MDWorkflowError):
-    """An external tool (gmx, tleap, ChimeraX, AmberTools, ...) exited non-zero."""
+    """An external tool (gmx, tleap, AmberTools, ...) exited non-zero."""
 
     def __init__(
         self,
@@ -53,6 +53,16 @@ class StepToolError(MDWorkflowError):
             tail = "\n".join(stderr.strip().splitlines()[-20:])
             parts.append(f"stderr (tail):\n{tail}")
         super().__init__("\n".join(parts))
+
+
+class CrystalSymmetryError(MDWorkflowError):
+    """A PDB lacks the symmetry metadata needed to build the crystal, or the requested
+    crystal cannot be written as a PDB file.
+
+    Raised by the gemmi primitives in ``core.crystal`` — missing/unknown CRYST1 space
+    group, a bad symmetry-operation order, or a supercell whose numbering would not fit
+    the fixed-column serial/resSeq fields.
+    """
 
 
 class GmxOutputParseError(MDWorkflowError):

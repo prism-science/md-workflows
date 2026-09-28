@@ -11,12 +11,12 @@ without rebuilding the base:
 
 | Stage | Dockerfile | Contents |
 |-------|-----------|----------|
-| base    | `Dockerfile.base`    | CUDA 12.6 devel toolchain, micromamba/conda `lunus` env, lunus, ChimeraX. Architecture-neutral. |
+| base    | `Dockerfile.base`    | CUDA 12.6 devel toolchain, micromamba/conda `lunus` env, lunus. Architecture-neutral. |
 | gromacs | `Dockerfile.gromacs` | GROMACS (CUDA, tuned for H100 / AVX-512 by default) + the `md_workflows` package. The consumable image. |
 
 (An Astera-specific `Dockerfile.actl` overlay adds workspace conventions on top of `gromacs`. It
 is tracked here so it stays under CI lint coverage, but is built and published only from the
-`astera` deployment branch.)
+`astera` deployment branch, to Astera's internal registry.)
 
 ## 1) Build the images
 
@@ -32,9 +32,16 @@ docker build -f Dockerfile.base -t md-base:local .
 docker build -f Dockerfile.gromacs --build-arg BASE_IMAGE=md-base:local -t md-gromacs:local .
 ```
 
-CI builds these stages and pushes versioned tags (derived from the `version` in
-`pyproject.toml`) to the Astera Harbor registry; see `.github/workflows/build-images.yml` on
-the `astera` branch.
+Or pull the published images instead of building them. CI publishes `base` and `gromacs` from
+the `astera` branch to `ghcr.io/prism-science/md-workflows`, as stage-prefixed tags derived from
+the `version` in `pyproject.toml` (`gromacs-<version>`, `gromacs-<version>-b<run>`,
+`gromacs-sha-<commit>`, and `gromacs` for the latest; likewise `base-…`):
+
+```bash
+docker pull ghcr.io/prism-science/md-workflows:gromacs
+```
+
+See `.github/workflows/build-images.yml`.
 
 ## 2) Start a container
 
@@ -89,6 +96,15 @@ run_profiles:
   equil: { ntomp: 16, nb: gpu, pme: gpu, bonded: gpu, tunepme: false }
   min:   { ntomp: 16, nb: gpu, pme: cpu, bonded: cpu, tunepme: false }
 ```
+
+`make_crystal` expands the asymmetric unit to the unit cell and propagates the lattice
+with [gemmi](https://gemmi.readthedocs.io) (`md_workflows/core/crystal.py`) instead of
+ChimeraX and AmberTools `PropPDB`, so neither is needed at run time. `crystal.spacegroup`
+overrides the CRYST1 space group, `crystal.op_order` reorders the symmetry operations
+(e.g. `[1, 2, 4, 3]` reproduces the chain labelling of the old ChimeraX route), and
+`crystal.numbering` picks the supercell's atom/residue numbering — `continuous`
+(PropPDB-compatible), `per-cell` (counters restart in every cell, for supercells past
+the 99999-atom / 9999-residue PDB fields) or `auto`.
 
 ```bash
 md-workflows -w run_dir -c config.yaml run-pipeline

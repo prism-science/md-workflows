@@ -12,14 +12,22 @@ Defaults follow the canonical taylor scripts
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from typing import Any, Literal
 
-import tomllib
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
+if sys.version_info >= (3, 11):
+    import tomllib
+else:  # tomllib is 3.11+; the image's lunus env pins Python 3.10
+    import tomli as tomllib
+
 Offload = Literal["auto", "cpu", "gpu"]
+
+# Atom/residue numbering of a propagated supercell; see ``core.crystal``.
+CrystalNumbering = Literal["auto", "continuous", "per-cell"]
 
 # Keys for the per-invocation mdrun profiles. Each GROMACS mdrun call in the pipeline
 # looks up its profile by one of these names.
@@ -106,6 +114,13 @@ class CrystalParams(BaseModel):
     ix: int = 1
     iy: int | None = None  # falls back to ix
     iz: int | None = None  # falls back to ix
+    spacegroup: str | None = None  # None => take it from the CRYST1 record
+    # 1-based reordering of the space group's symmetry operations, e.g. [1, 2, 4, 3] to
+    # reproduce the chain labelling of the old ChimeraX route; see ``core.crystal``.
+    op_order: list[int] | None = None
+    numbering: CrystalNumbering = "auto"
+    # Retained so existing configs and --chimerax-exec keep validating; the expansion is
+    # gemmi-based now and never launches ChimeraX.
     chimerax_exec: str = "chimerax"
 
 
@@ -113,6 +128,10 @@ class WaterboxParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
     nc_scale: int = 5  # cell subdivision / reservoir tiling factor (taylor)
     conc: float = 60.0  # gmx insert-molecules water concentration (mol/L)
+    # Numbering for the nc_scale^3 tiling; see ``core.crystal.propagate_cell``. "auto"
+    # keeps PropPDB-compatible continuous numbering until the water count overruns the
+    # PDB resSeq field, then restarts the counters in each tile.
+    numbering: CrystalNumbering = "auto"
     min_mdp: str = "min_water.mdp"
     equil_mdp: str = "equil_water.mdp"
 

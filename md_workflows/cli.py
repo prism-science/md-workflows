@@ -88,6 +88,19 @@ def _ntomp_override(ntomp: int | None) -> dict[str, Any]:
     return {"run_profiles": {k: {"ntomp": ntomp} for k in RUN_PROFILE_KEYS}}
 
 
+def _parse_op_order(value: str | None) -> list[int] | None:
+    """Parse a comma/space separated 1-based symmetry-operation order."""
+    if value is None:
+        return None
+    try:
+        return [int(token) for token in value.replace(",", " ").split()]
+    except ValueError as exc:
+        typer.secho(
+            f"invalid --op-order {value!r}: expected integers", fg=typer.colors.RED, err=True
+        )
+        raise typer.Exit(1) from exc
+
+
 def _emit(result: StepResult) -> None:
     color = {
         StepStatus.COMPLETED: typer.colors.GREEN,
@@ -141,13 +154,34 @@ def make_crystal_cmd(
     ix: int | None = typer.Option(None, "--ix", help="Supercell replication in x (and y/z)."),
     iy: int | None = typer.Option(None, "--iy"),
     iz: int | None = typer.Option(None, "--iz"),
-    chimerax_exec: str | None = typer.Option(None, "--chimerax-exec"),
+    spacegroup: str | None = typer.Option(
+        None, "--spacegroup", help="Override the space group in CRYST1, e.g. 'P 21 21 21'."
+    ),
+    op_order: str | None = typer.Option(
+        None,
+        "--op-order",
+        help="1-based symmetry-operation order, e.g. '1,2,4,3'; reorders the cell's chains.",
+    ),
+    numbering: str | None = typer.Option(
+        None, "--numbering", help="Supercell numbering: auto (default), continuous or per-cell."
+    ),
+    chimerax_exec: str | None = typer.Option(
+        None, "--chimerax-exec", help="Unused: the expansion is gemmi-based. Kept for callers."
+    ),
 ) -> None:
     """Build the crystal supercell."""
     common: Common = ctx.obj
     crystal = {
         k: v
-        for k, v in {"ix": ix, "iy": iy, "iz": iz, "chimerax_exec": chimerax_exec}.items()
+        for k, v in {
+            "ix": ix,
+            "iy": iy,
+            "iz": iz,
+            "spacegroup": spacegroup,
+            "op_order": _parse_op_order(op_order),
+            "numbering": numbering,
+            "chimerax_exec": chimerax_exec,
+        }.items()
         if v is not None
     }
     cfg = _load_cfg(common, {"crystal": crystal} if crystal else None)

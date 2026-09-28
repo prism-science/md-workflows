@@ -1,8 +1,10 @@
 """Build a crystal supercell from the parameterized protein.
 
 Corresponds to ``make_crystal.sh``: dry the protein, restore the CRYST1 cell, expand
-the asymmetric unit to the full unit cell with ChimeraX, set the spacegroup to P1, then
-replicate into a supercell with PropPDB.
+the asymmetric unit to the full unit cell in space group P1, then replicate it into a
+supercell. The expansion and the replication are done with gemmi (``core.crystal``),
+which replaces the ChimeraX ``unitcell`` and AmberTools ``PropPDB`` calls the shell
+recipe shelled out to; ``pdb4amber`` is the only external tool this step still needs.
 """
 
 from __future__ import annotations
@@ -50,7 +52,9 @@ def make_crystal(
     *,
     resume: bool = False,
 ) -> MakeCrystalResult:
-    from ..gmx import run_tool  # local import keeps module import light for tests
+    # local imports keep module import (and the contract tests) light
+    from ..crystal import expand_to_unit_cell, gemmi_version, propagate_cell
+    from ..gmx import run_tool
 
     check_inputs(inputs)
     wd = inputs.workdir
@@ -86,32 +90,33 @@ def make_crystal(
     # 2. Restore the CRYST1 cell from pdb_clean; drop stray ions / any wrong CRYST1.
     _prepend_cryst1(inputs.pdb_clean, prot_dry)
 
-    # 3. Expand the asymmetric unit to the full unit cell with ChimeraX.
-    _expand_unit_cell(wd, prot_dry, prot_dry_cell, params.chimerax_exec)
+    # 3. Expand the asymmetric unit to the full unit cell, already in spacegroup P1.
+    expanded = expand_to_unit_cell(
+        prot_dry,
+        prot_dry_cell,
+        spacegroup=params.spacegroup,
+        op_order=params.op_order,
+    )
 
-    # 4. Rewrite the CRYST1 spacegroup to P1 and prepend to the cell PDB.
-    _set_p1_spacegroup(prot_dry, prot_dry_cell)
-
-    # 5. Replicate the P1 cell into the requested supercell.
+    # 4. Replicate the P1 cell into the requested supercell.
+    metrics: dict[str, float | int] = {
+        "ix": ix,
+        "iy": iy,
+        "iz": iz,
+        "cell_atoms": expanded.natoms,
+        "cell_copies": len(expanded.chain_ids),
+    }
     if ix > 0 or iy > 0 or iz > 0:
-        run_tool(
-            [
-                "PropPDB",
-                "-p",
-                str(prot_dry_cell),
-                "-o",
-                str(xtal),
-                "-ix",
-                str(ix),
-                "-iy",
-                str(iy),
-                "-iz",
-                str(iz),
-            ],
-            tool="PropPDB",
-            cwd=wd,
-            log_path=wd / "proppdb.log",
+        propagated = propagate_cell(
+            prot_dry_cell,
+            xtal,
+            ix=ix,
+            iy=iy,
+            iz=iz,
+            numbering=params.numbering,
         )
+        metrics["xtal_atoms"] = propagated.natoms
+        metrics["xtal_residues"] = propagated.nresidues
     else:
         shutil.copy(prot_dry_cell, xtal)
 
@@ -122,7 +127,8 @@ def make_crystal(
         outputs=outputs,
         params=params.model_dump(),
         input_checksums=checksums(consumed),
-        metrics={"ix": ix, "iy": iy, "iz": iz},
+        tool_versions={"gemmi": gemmi_version()},
+        metrics=metrics,
     )
 
 
@@ -145,34 +151,3 @@ def _prepend_cryst1(source_pdb: Path, target_pdb: Path) -> None:
     with open(target_pdb, "w") as fh:
         fh.write(cryst1)
         fh.writelines(filtered)
-
-
-def _expand_unit_cell(workdir: Path, dry_pdb: Path, cell_pdb: Path, chimerax_exec: str) -> None:
-    from ..gmx import run_tool
-
-    cxc = workdir / "expand.cxc"
-    cxc.write_text(
-        f"open {dry_pdb}\nchangechains #1 A\nunitcell #1\ncombine #2\nsave {cell_pdb} #3\nquit\n"
-    )
-    run_tool(
-        [chimerax_exec, "--offscreen", "--nogui", str(cxc)],
-        tool="ChimeraX",
-        cwd=workdir,
-        log_path=workdir / "chimerax_expand.log",
-    )
-
-
-def _set_p1_spacegroup(dry_pdb: Path, cell_pdb: Path) -> None:
-    """Rewrite the CRYST1 line with a P 1 spacegroup and prepend to the cell PDB."""
-    cryst1_p1 = ""
-    with open(dry_pdb) as fh:
-        for line in fh:
-            if line.startswith("CRYST1"):
-                cryst1_p1 = line[:55] + "P 1\n"
-                break
-
-    with open(cell_pdb) as fh:
-        cell_content = fh.read()
-    with open(cell_pdb, "w") as fh:
-        fh.write(cryst1_p1)
-        fh.write(cell_content)
