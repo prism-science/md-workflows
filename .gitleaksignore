@@ -1,0 +1,21 @@
+# Accepted findings for the org secret scan (prism-science/github-workflows, secret-scan.yml).
+#
+# Rule astera-internal-hostname: historical references to Astera's internal container registry
+# host, in the build workflows, Dockerfiles and README of these commits (on main, astera and
+# dev). The repo is public, so they are already disclosed and git history keeps them; the host
+# was removed from the working tree in PR #15, where build-images.yml now reads it from the
+# ASTERA_REGISTRY secret. The host is a registry endpoint, not a credential; registry access
+# stays behind the Harbor credentials in the `harbor` environment.
+119f1f5ad21e6a60a6d599e2ddee5ebd2ea73d30:.github/workflows/build-images.yml:astera-internal-hostname:36
+f91aa04f88471ec7b71fc3e94c95821e05ed7057:Dockerfile.actl:astera-internal-hostname:11
+f91aa04f88471ec7b71fc3e94c95821e05ed7057:.github/workflows/build-images.yml:astera-internal-hostname:30
+f91aa04f88471ec7b71fc3e94c95821e05ed7057:.github/workflows/build-images.yml:astera-internal-hostname:33
+f91aa04f88471ec7b71fc3e94c95821e05ed7057:.github/workflows/build-images.yml:astera-internal-hostname:34
+7578642a282b3ce46bd55d0293459c008c9a2884:Dockerfile.astera:astera-internal-hostname:14
+425a67755927313d8a065654fd7935c2c6e6ab27:Dockerfile.astera:astera-internal-hostname:13
+425a67755927313d8a065654fd7935c2c6e6ab27:README.md:astera-internal-hostname:10
+425a67755927313d8a065654fd7935c2c6e6ab27:README.md:astera-internal-hostname:40
+9f2ddc1b545a90e828dd97c9ca359d60d522f7ac:Dockerfile.astera:astera-internal-hostname:13
+9f2ddc1b545a90e828dd97c9ca359d60d522f7ac:.github/workflows/astera-docker.yml:astera-internal-hostname:12
+9f2ddc1b545a90e828dd97c9ca359d60d522f7ac:README.md:astera-internal-hostname:10
+9f2ddc1b545a90e828dd97c9ca359d60d522f7ac:README.md:astera-internal-hostname:40
