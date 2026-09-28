@@ -4,6 +4,12 @@ Corresponds to the canonical (taylor) ``make_waterbox.sh``: subdivide the cell b
 ``nc_scale``, fill the sub-cell with water at ``conc`` mol/L, tile it back up
 ``nc_scale``x, restore the full crystal CRYST1, then minimize + equilibrate the box.
 
+The tiling is done with gemmi (``core.crystal.propagate_cell``), which replaces the
+AmberTools ``PropPDB`` call the shell recipe shelled out to; ``gmx insert-molecules`` is
+the only external tool this step still needs. ``nc_scale``^3 cells of water overrun the
+fixed-column PDB resSeq field easily (PropPDB wrapped it silently), so the default
+``auto`` numbering restarts the counters per cell once the totals no longer fit.
+
 The water count written to the topology is the exact molecule count of the expanded box
 (``count_waters``), superseding the scripts' log-derived estimates.
 """
@@ -62,6 +68,9 @@ def make_waterbox(
     *,
     resume: bool = False,
 ) -> MakeWaterboxResult:
+    # local import keeps module import (and the contract tests) light
+    from ..crystal import propagate_cell
+
     check_inputs(inputs)
     wd = inputs.workdir
     wb = wd / "waterbox"
@@ -118,23 +127,13 @@ def make_waterbox(
         cwd=wb,
         log_path=wb / "insert-molecules.log",
     )
-    run_tool(
-        [
-            "PropPDB",
-            "-p",
-            str(wb / "box_solv.pdb"),
-            "-o",
-            str(box_solv_expand),
-            "-ix",
-            str(nc),
-            "-iy",
-            str(nc),
-            "-iz",
-            str(nc),
-        ],
-        tool="PropPDB",
-        cwd=wb,
-        log_path=wb / "proppdb.log",
+    propagated = propagate_cell(
+        wb / "box_solv.pdb",
+        box_solv_expand,
+        ix=nc,
+        iy=nc,
+        iz=nc,
+        numbering=params.numbering,
     )
     _restore_cryst1(box_solv_expand, cryst1_xtal)
 
@@ -155,7 +154,7 @@ def make_waterbox(
         params=params.model_dump(),
         input_checksums=checksums(consumed),
         run_profiles_used={"waterbox_min": min_profile, "waterbox_equil": equil_profile},
-        metrics={"nwat": nwat, "nc_scale": nc},
+        metrics={"nwat": nwat, "nc_scale": nc, "box_atoms": propagated.natoms},
         log_paths=[min_run.log, equil_run.log],
     )
 

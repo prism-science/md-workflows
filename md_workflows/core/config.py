@@ -123,6 +123,10 @@ class WaterboxParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
     nc_scale: int = 5  # cell subdivision / reservoir tiling factor (taylor)
     conc: float = 60.0  # gmx insert-molecules water concentration (mol/L)
+    # Numbering for the nc_scale^3 tiling; see ``core.crystal.propagate_cell``. "auto"
+    # keeps PropPDB-compatible continuous numbering until the water count overruns the
+    # PDB resSeq field, then restarts the counters in each tile.
+    numbering: CrystalNumbering = "auto"
     min_mdp: str = "min_water.mdp"
     equil_mdp: str = "equil_water.mdp"
 
