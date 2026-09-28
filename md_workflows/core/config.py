@@ -12,12 +12,17 @@ Defaults follow the canonical taylor scripts
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from typing import Any, Literal
 
-import tomllib
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
+
+if sys.version_info >= (3, 11):
+    import tomllib
+else:  # tomllib is 3.11+; the image's lunus env pins Python 3.10
+    import tomli as tomllib
 
 Offload = Literal["auto", "cpu", "gpu"]
 
