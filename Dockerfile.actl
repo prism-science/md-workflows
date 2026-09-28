@@ -8,7 +8,7 @@
 # Build locally (after building md-gromacs:local):
 #   docker buildx build --platform linux/amd64 \
 #     -f Dockerfile.actl --build-arg GROMACS_IMAGE=md-gromacs:local \
-#     -t harbor.astera.sh/library/md-workflows:local-actl .
+#     -t md-actl:local .
 ARG GROMACS_IMAGE=md-gromacs:local
 FROM ${GROMACS_IMAGE} AS actl
 

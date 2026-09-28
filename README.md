@@ -16,7 +16,7 @@ without rebuilding the base:
 
 (An Astera-specific `Dockerfile.actl` overlay adds workspace conventions on top of `gromacs`. It
 is tracked here so it stays under CI lint coverage, but is built and published only from the
-`astera` deployment branch.)
+`astera` deployment branch, to Astera's internal registry.)
 
 ## 1) Build the images
 
@@ -32,9 +32,16 @@ docker build -f Dockerfile.base -t md-base:local .
 docker build -f Dockerfile.gromacs --build-arg BASE_IMAGE=md-base:local -t md-gromacs:local .
 ```
 
-CI builds these stages and pushes versioned tags (derived from the `version` in
-`pyproject.toml`) to the Astera Harbor registry; see `.github/workflows/build-images.yml` on
-the `astera` branch.
+Or pull the published images instead of building them. CI publishes `base` and `gromacs` from
+the `astera` branch to `ghcr.io/prism-science/md-workflows`, as stage-prefixed tags derived from
+the `version` in `pyproject.toml` (`gromacs-<version>`, `gromacs-<version>-b<run>`,
+`gromacs-sha-<commit>`, and `gromacs` for the latest; likewise `base-…`):
+
+```bash
+docker pull ghcr.io/prism-science/md-workflows:gromacs
+```
+
+See `.github/workflows/build-images.yml`.
 
 ## 2) Start a container
 

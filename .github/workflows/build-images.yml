@@ -1,19 +1,27 @@
 name: Build & push md-workflows images
 
-# Builds the three-stage image chain on the self-hosted diffuse builder and pushes to Harbor.
+# Builds the three-stage image chain on the self-hosted diffuse builder and publishes it:
+#   - base + gromacs -> ghcr.io/prism-science/md-workflows (public; tags prefixed base-/gromacs-),
+#     pushed with the workflow's own GITHUB_TOKEN;
+#   - actl (the Astera ACTL overlay) -> Astera's internal registry, library/md-workflows. The
+#     registry host is the ASTERA_REGISTRY secret, never written in this public repo; GitHub masks
+#     it wherever it is echoed, including inside the longer image refs built from it.
 #
 # Security: this workflow has NO pull_request trigger, so fork PRs can never reach the
-# self-hosted runner or the Harbor credentials. Heavy builds run only on push to `astera`
-# (path-filtered) and manual dispatch. Credentials live in the `harbor` GitHub Environment,
-# which must be restricted to the `astera` deployment branch; the `diffuse-sh-builder` runner
-# should sit in a runner group scoped to this repo. See the runbook in the PR description.
+# self-hosted runner or any credentials. Heavy builds run only on push to `astera`
+# (path-filtered) and manual dispatch. All three publishing jobs run in the `harbor` GitHub
+# Environment, which must be restricted to the `astera` deployment branch: that restriction is
+# what limits publishing -- including the public GHCR images -- to `astera`, and the environment
+# holds the Astera registry secrets (ASTERA_REGISTRY, HARBOR_USERNAME, HARBOR_PASSWORD). The
+# `diffuse-sh-builder` runner should sit in a runner group scoped to this repo. See the runbook
+# in the PR description.
 #
 # Manual dispatch runs only the `test-build` job unless `publish` is ticked: all three stages
 # built on the runner's local Docker daemon, smoke-tested, then untagged. It pushes nothing and
-# uses no Harbor credentials, so it needs no `harbor` environment and can be dispatched from any
-# branch to try Dockerfile changes before they reach `astera`:
+# uses no registry credentials, so it needs no `harbor` environment and can be dispatched from
+# any branch to try Dockerfile changes before they reach `astera`:
 #     gh workflow run build-images.yml --ref <branch>                  # build + smoke-test
-#     gh workflow run build-images.yml --ref astera -f publish=true    # build + push to Harbor
+#     gh workflow run build-images.yml --ref astera -f publish=true    # build + publish
 #
 # NOTE: runs-on matches only the unique custom label `diffuse-sh-builder` (not `self-hosted`),
 # because that runner was registered with --no-default-labels and so lacks the implicit
@@ -31,7 +39,7 @@ on:
   workflow_dispatch:
     inputs:
       publish:
-        description: "Push the images to Harbor. Leave unticked to build + smoke-test only."
+        description: "Publish the images (GHCR + Astera registry). Leave unticked to build + smoke-test only."
         type: boolean
         default: false
 
@@ -43,11 +51,10 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  REGISTRY: harbor.astera.sh
-  # base + gromacs (bake the non-redistributable ChimeraX) live in the proprietary project,
-  # distinguished by a stage tag prefix. The final consumable actl image lands in library.
-  PROPRIETARY_IMAGE: harbor.astera.sh/diffuse-proprietary/md-workflows
-  LIBRARY_IMAGE: harbor.astera.sh/library/md-workflows
+  # Public stages, distinguished by a stage tag prefix.
+  PUBLIC_IMAGE: ghcr.io/prism-science/md-workflows
+  # Path of the actl overlay on the Astera registry; the host comes from secrets.ASTERA_REGISTRY.
+  ASTERA_IMAGE_PATH: library/md-workflows
 
 jobs:
   version:
@@ -77,18 +84,22 @@ jobs:
     if: github.event_name == 'push' || inputs.publish
     needs: version
     runs-on: [diffuse-sh-builder]
+    # Uses no environment secrets; the environment's branch restriction gates publishing.
     environment: harbor
+    permissions:
+      contents: read
+      packages: write
     outputs:
       digest: ${{ steps.build.outputs.digest }}
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
-      - name: Login to Harbor
+      - name: Login to GHCR
         uses: docker/login-action@v3
         with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ secrets.HARBOR_USERNAME }}
-          password: ${{ secrets.HARBOR_PASSWORD }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
       - id: build
         uses: docker/build-push-action@v6
         with:
@@ -98,30 +109,34 @@ jobs:
           push: true
           provenance: false
           tags: |
-            ${{ env.PROPRIETARY_IMAGE }}:base-${{ needs.version.outputs.semver }}
-            ${{ env.PROPRIETARY_IMAGE }}:base-${{ needs.version.outputs.build }}
-            ${{ env.PROPRIETARY_IMAGE }}:base-${{ needs.version.outputs.sha }}
-            ${{ env.PROPRIETARY_IMAGE }}:base
-          cache-from: type=registry,ref=${{ env.PROPRIETARY_IMAGE }}:base-buildcache
-          cache-to: type=registry,ref=${{ env.PROPRIETARY_IMAGE }}:base-buildcache,mode=max
+            ${{ env.PUBLIC_IMAGE }}:base-${{ needs.version.outputs.semver }}
+            ${{ env.PUBLIC_IMAGE }}:base-${{ needs.version.outputs.build }}
+            ${{ env.PUBLIC_IMAGE }}:base-${{ needs.version.outputs.sha }}
+            ${{ env.PUBLIC_IMAGE }}:base
+          cache-from: type=registry,ref=${{ env.PUBLIC_IMAGE }}:base-buildcache
+          cache-to: type=registry,ref=${{ env.PUBLIC_IMAGE }}:base-buildcache,mode=max
 
   gromacs:
     name: Build gromacs
     if: github.event_name == 'push' || inputs.publish
     needs: [version, base]
     runs-on: [diffuse-sh-builder]
+    # Uses no environment secrets; the environment's branch restriction gates publishing.
     environment: harbor
+    permissions:
+      contents: read
+      packages: write
     outputs:
       digest: ${{ steps.build.outputs.digest }}
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
-      - name: Login to Harbor
+      - name: Login to GHCR
         uses: docker/login-action@v3
         with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ secrets.HARBOR_USERNAME }}
-          password: ${{ secrets.HARBOR_PASSWORD }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
       - id: build
         uses: docker/build-push-action@v6
         with:
@@ -131,30 +146,48 @@ jobs:
           push: true
           provenance: false
           build-args: |
-            BASE_IMAGE=${{ env.PROPRIETARY_IMAGE }}@${{ needs.base.outputs.digest }}
+            BASE_IMAGE=${{ env.PUBLIC_IMAGE }}@${{ needs.base.outputs.digest }}
           tags: |
-            ${{ env.PROPRIETARY_IMAGE }}:gromacs-${{ needs.version.outputs.semver }}
-            ${{ env.PROPRIETARY_IMAGE }}:gromacs-${{ needs.version.outputs.build }}
-            ${{ env.PROPRIETARY_IMAGE }}:gromacs-${{ needs.version.outputs.sha }}
-            ${{ env.PROPRIETARY_IMAGE }}:gromacs
-          cache-from: type=registry,ref=${{ env.PROPRIETARY_IMAGE }}:gromacs-buildcache
-          cache-to: type=registry,ref=${{ env.PROPRIETARY_IMAGE }}:gromacs-buildcache,mode=max
+            ${{ env.PUBLIC_IMAGE }}:gromacs-${{ needs.version.outputs.semver }}
+            ${{ env.PUBLIC_IMAGE }}:gromacs-${{ needs.version.outputs.build }}
+            ${{ env.PUBLIC_IMAGE }}:gromacs-${{ needs.version.outputs.sha }}
+            ${{ env.PUBLIC_IMAGE }}:gromacs
+          cache-from: type=registry,ref=${{ env.PUBLIC_IMAGE }}:gromacs-buildcache
+          cache-to: type=registry,ref=${{ env.PUBLIC_IMAGE }}:gromacs-buildcache,mode=max
 
   actl:
-    name: Build actl (consumable)
+    name: Build actl (Astera overlay)
     if: github.event_name == 'push' || inputs.publish
-    needs: [version, gromacs]
+    needs: [version, base, gromacs]
     runs-on: [diffuse-sh-builder]
     environment: harbor
+    permissions:
+      contents: read
+      packages: read # pull the gromacs parent from GHCR, even while the package is private
+    env:
+      # Bare registry host only; the image path stays in the workflow env above.
+      ASTERA_REGISTRY: ${{ secrets.ASTERA_REGISTRY }}
     outputs:
       digest: ${{ steps.build.outputs.digest }}
     steps:
+      - name: Check the registry secret is set
+        run: |
+          if [ -z "${ASTERA_REGISTRY}" ]; then
+            echo "::error::Set ASTERA_REGISTRY (the bare Astera registry host) in the harbor environment."
+            exit 1
+          fi
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
-      - name: Login to Harbor
+      - name: Login to GHCR
         uses: docker/login-action@v3
         with:
-          registry: ${{ env.REGISTRY }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Login to the Astera registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.ASTERA_REGISTRY }}
           username: ${{ secrets.HARBOR_USERNAME }}
           password: ${{ secrets.HARBOR_PASSWORD }}
       - id: build
@@ -166,26 +199,30 @@ jobs:
           push: true
           provenance: false
           build-args: |
-            GROMACS_IMAGE=${{ env.PROPRIETARY_IMAGE }}@${{ needs.gromacs.outputs.digest }}
+            GROMACS_IMAGE=${{ env.PUBLIC_IMAGE }}@${{ needs.gromacs.outputs.digest }}
           tags: |
-            ${{ env.LIBRARY_IMAGE }}:${{ needs.version.outputs.semver }}
-            ${{ env.LIBRARY_IMAGE }}:${{ needs.version.outputs.build }}
-            ${{ env.LIBRARY_IMAGE }}:${{ needs.version.outputs.sha }}
-            ${{ env.LIBRARY_IMAGE }}:actl
-            ${{ env.LIBRARY_IMAGE }}:latest
-          cache-from: type=registry,ref=${{ env.LIBRARY_IMAGE }}:actl-buildcache
-          cache-to: type=registry,ref=${{ env.LIBRARY_IMAGE }}:actl-buildcache,mode=max
+            ${{ env.ASTERA_REGISTRY }}/${{ env.ASTERA_IMAGE_PATH }}:${{ needs.version.outputs.semver }}
+            ${{ env.ASTERA_REGISTRY }}/${{ env.ASTERA_IMAGE_PATH }}:${{ needs.version.outputs.build }}
+            ${{ env.ASTERA_REGISTRY }}/${{ env.ASTERA_IMAGE_PATH }}:${{ needs.version.outputs.sha }}
+            ${{ env.ASTERA_REGISTRY }}/${{ env.ASTERA_IMAGE_PATH }}:actl
+            ${{ env.ASTERA_REGISTRY }}/${{ env.ASTERA_IMAGE_PATH }}:latest
+          cache-from: type=registry,ref=${{ env.ASTERA_REGISTRY }}/${{ env.ASTERA_IMAGE_PATH }}:actl-buildcache
+          cache-to: type=registry,ref=${{ env.ASTERA_REGISTRY }}/${{ env.ASTERA_IMAGE_PATH }}:actl-buildcache,mode=max
       - name: Report digests
+        env:
+          BUILD: ${{ needs.version.outputs.build }}
         run: |
-          echo "base    digest: ${{ needs.base.outputs.digest }}"  || true
+          echo "base    digest: ${{ needs.base.outputs.digest }}"
           echo "gromacs digest: ${{ needs.gromacs.outputs.digest }}"
           echo "actl    digest: ${{ steps.build.outputs.digest }}"
-          echo "Published ${{ env.LIBRARY_IMAGE }}:${{ needs.version.outputs.build }}"
+          echo "Published ${PUBLIC_IMAGE}:gromacs-${BUILD}"
+          echo "Published ${ASTERA_REGISTRY}/${ASTERA_IMAGE_PATH}:${BUILD}"
 
-  # publish unticked: the chain above pulls each parent stage from Harbor by digest, so without
-  # a push the stages must instead be built in one job and chained through local tags, as in the
-  # README. `--builder default` pins the daemon's own BuildKit (docker driver), which can see
-  # locally built images in FROM, regardless of any buildx builder left selected on the runner.
+  # publish unticked: the chain above pulls each parent stage from a registry by digest, so
+  # without a push the stages must instead be built in one job and chained through local tags,
+  # as in the README. `--builder default` pins the daemon's own BuildKit (docker driver), which
+  # can see locally built images in FROM, regardless of any buildx builder left selected on the
+  # runner.
   test-build:
     name: Build all stages (no push)
     if: github.event_name == 'workflow_dispatch' && !inputs.publish
