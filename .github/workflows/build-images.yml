@@ -8,6 +8,13 @@ name: Build & push md-workflows images
 # which must be restricted to the `astera` deployment branch; the `diffuse-sh-builder` runner
 # should sit in a runner group scoped to this repo. See the runbook in the PR description.
 #
+# Manual dispatch runs only the `test-build` job unless `publish` is ticked: all three stages
+# built on the runner's local Docker daemon, smoke-tested, then untagged. It pushes nothing and
+# uses no Harbor credentials, so it needs no `harbor` environment and can be dispatched from any
+# branch to try Dockerfile changes before they reach `astera`:
+#     gh workflow run build-images.yml --ref <branch>                  # build + smoke-test
+#     gh workflow run build-images.yml --ref astera -f publish=true    # build + push to Harbor
+#
 # NOTE: runs-on matches only the unique custom label `diffuse-sh-builder` (not `self-hosted`),
 # because that runner was registered with --no-default-labels and so lacks the implicit
 # `self-hosted` label. The custom label alone unambiguously targets it.
@@ -22,6 +29,11 @@ on:
       - md_workflows/**
       - .github/workflows/build-images.yml
   workflow_dispatch:
+    inputs:
+      publish:
+        description: "Push the images to Harbor. Leave unticked to build + smoke-test only."
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -40,6 +52,7 @@ env:
 jobs:
   version:
     name: Compute version
+    if: github.event_name == 'push' || inputs.publish
     runs-on: ubuntu-latest
     outputs:
       semver: ${{ steps.v.outputs.semver }}
@@ -61,6 +74,7 @@ jobs:
 
   base:
     name: Build base
+    if: github.event_name == 'push' || inputs.publish
     needs: version
     runs-on: [diffuse-sh-builder]
     environment: harbor
@@ -93,6 +107,7 @@ jobs:
 
   gromacs:
     name: Build gromacs
+    if: github.event_name == 'push' || inputs.publish
     needs: [version, base]
     runs-on: [diffuse-sh-builder]
     environment: harbor
@@ -127,6 +142,7 @@ jobs:
 
   actl:
     name: Build actl (consumable)
+    if: github.event_name == 'push' || inputs.publish
     needs: [version, gromacs]
     runs-on: [diffuse-sh-builder]
     environment: harbor
@@ -165,3 +181,44 @@ jobs:
           echo "gromacs digest: ${{ needs.gromacs.outputs.digest }}"
           echo "actl    digest: ${{ steps.build.outputs.digest }}"
           echo "Published ${{ env.LIBRARY_IMAGE }}:${{ needs.version.outputs.build }}"
+
+  # publish unticked: the chain above pulls each parent stage from Harbor by digest, so without
+  # a push the stages must instead be built in one job and chained through local tags, as in the
+  # README. `--builder default` pins the daemon's own BuildKit (docker driver), which can see
+  # locally built images in FROM, regardless of any buildx builder left selected on the runner.
+  test-build:
+    name: Build all stages (no push)
+    if: github.event_name == 'workflow_dispatch' && !inputs.publish
+    runs-on: [diffuse-sh-builder]
+    env:
+      TAG: test-${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build base
+        run: >-
+          docker buildx build --builder default --platform linux/amd64
+          -f Dockerfile.base -t "md-base:${TAG}" .
+      - name: Build gromacs
+        run: >-
+          docker buildx build --builder default --platform linux/amd64
+          -f Dockerfile.gromacs --build-arg BASE_IMAGE="md-base:${TAG}" -t "md-gromacs:${TAG}" .
+      - name: Build actl
+        run: >-
+          docker buildx build --builder default --platform linux/amd64
+          -f Dockerfile.actl --build-arg GROMACS_IMAGE="md-gromacs:${TAG}" -t "md-actl:${TAG}" .
+      # GPU-free: tools the pipeline shells out to, the gemmi crystal code, and no ChimeraX.
+      - name: Smoke test
+        run: |
+          docker run --rm "md-actl:${TAG}" bash -c '
+            set -euo pipefail
+            md-workflows --help > /dev/null
+            python -c "import gemmi, md_workflows.core.crystal; print(gemmi.__version__)"
+            for cmd in gmx pdb4amber; do command -v "${cmd}"; done
+            if command -v chimerax ChimeraX > /dev/null 2>&1; then
+              echo "ChimeraX is still installed" >&2
+              exit 1
+            fi
+          '
+      - name: Remove test tags
+        if: always()
+        run: docker image rm -f "md-actl:${TAG}" "md-gromacs:${TAG}" "md-base:${TAG}" || true
