@@ -32,11 +32,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # ---------- install micromamba ----------
 # Install envs under /opt so shebangs (#!/opt/micromamba/...) match the runtime layout.
-RUN curl -L micro.mamba.pm/install.sh -o /tmp/micromamba_install.sh \
-    && printf '\n\n\n\n' | bash /tmp/micromamba_install.sh \
-    && rm /tmp/micromamba_install.sh \
-    && mkdir -p /opt/micromamba/bin \
-    && cp /root/.local/bin/micromamba /opt/micromamba/bin/micromamba
+# Pinned: micromamba 2.10's solver never finished resolving the environment below (2.5 h on
+# a hosted runner), while 2.8.1, the release current when this image last built cleanly,
+# solves it in minutes.
+ARG MICROMAMBA_VERSION=2.8.1
+RUN mkdir -p /opt/micromamba \
+    && curl -fsSL --retry 5 "https://micro.mamba.pm/api/micromamba/linux-64/${MICROMAMBA_VERSION}" \
+       | tar -xj -C /opt/micromamba bin/micromamba \
+    && /opt/micromamba/bin/micromamba --version
 
 ENV MAMBA_ROOT_PREFIX=/opt/micromamba
 ENV MAMBA_EXE=/opt/micromamba/bin/micromamba
