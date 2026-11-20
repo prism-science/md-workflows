@@ -80,6 +80,10 @@ jobs:
     needs: version
     runs-on: ubuntu-latest
     environment: harbor-publish
+    # id-token: the Tailscale action exchanges a GitHub OIDC token for its trust credential.
+    permissions:
+      contents: read
+      id-token: write
     outputs:
       digest: ${{ steps.build.outputs.digest }}
     steps:
@@ -126,6 +130,10 @@ jobs:
     needs: [version, base]
     runs-on: ubuntu-latest
     environment: harbor-publish
+    # id-token: the Tailscale action exchanges a GitHub OIDC token for its trust credential.
+    permissions:
+      contents: read
+      id-token: write
     outputs:
       digest: ${{ steps.build.outputs.digest }}
     steps:
@@ -174,6 +182,10 @@ jobs:
     needs: [version, base, gromacs]
     runs-on: ubuntu-latest
     environment: harbor-publish
+    # id-token: the Tailscale action exchanges a GitHub OIDC token for its trust credential.
+    permissions:
+      contents: read
+      id-token: write
     outputs:
       digest: ${{ steps.build.outputs.digest }}
     steps:
