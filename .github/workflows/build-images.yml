@@ -1,18 +1,20 @@
 name: Build & push md-workflows images
 
-# Builds the three-stage image chain and publishes it. The ChimeraX-dependent base/gromacs
-# builds run on GitHub-hosted runners (open egress reaches cgl.ucsf.edu + Docker Hub) and push
-# the intermediates to a PRIVATE Docker Hub repo. Only the final actl assembly runs on the
-# self-hosted diffuse builder, because only it pushes to Harbor (reachable over Tailscale).
+# Builds the three-stage image chain and publishes it, all on GitHub-hosted runners. The
+# ChimeraX-dependent base/gromacs intermediates go to a PRIVATE Docker Hub repo. The final actl
+# image goes to Harbor's private `diffuse` project, which the actl catalog pins by digest.
 #
-# Security: this workflow has NO pull_request trigger, so fork PRs can never reach the runners
-# or the publish credentials. Heavy builds run only on push to `astera` (path-filtered) and
-# manual dispatch. Credentials live in the `harbor` GitHub Environment (branch-restricted to
-# `astera`, with required reviewers if configured).
+# Harbor is reachable only over the tailnet: the actl job joins it as an ephemeral tag:ci-n
+# device (Tailscale trust credential, no stored Tailscale secret), which can reach Harbor and
+# nothing else. Tags in the `diffuse` project are immutable, so every push uses tags unique to
+# the run.
 #
-# NOTE: the actl job's runs-on matches only the unique custom label `diffuse-sh-builder` (not
-# `self-hosted`), because that runner was registered with --no-default-labels and so lacks the
-# implicit `self-hosted` label. The custom label alone unambiguously targets it.
+# Security: this workflow has NO pull_request trigger, so fork PRs can never reach the publish
+# credentials. Heavy builds run only on push to `astera` (path-filtered) and manual dispatch.
+# The Docker Hub intermediates use the `harbor` GitHub Environment; the Harbor push uses
+# `harbor-publish`, which holds the Tailscale trust credential (TS_CI_CLIENT_ID,
+# TS_CI_AUDIENCE), the Harbor robot (HARBOR_USERNAME, HARBOR_PASSWORD) and Docker Hub read
+# access (DOCKERHUB_USERNAME, DOCKERHUB_TOKEN). Both are deployable from `astera` only.
 on:
   push:
     branches: [astera]
@@ -38,10 +40,10 @@ env:
   # `hub.docker.com` (that's the UI, not a registry endpoint).
   DOCKERHUB_REGISTRY: docker.io
   # base + gromacs bake the non-redistributable ChimeraX, so they publish to the PRIVATE Docker
-  # Hub repo (not public), distinguished by a stage tag prefix. The final consumable actl image
-  # lands in the Harbor library project.
+  # Hub repo (not public), distinguished by a stage tag prefix. The final consumable actl image,
+  # which carries ChimeraX too, lands in Harbor's private `diffuse` project.
   DOCKERHUB_IMAGE: docker.io/diffuseproject/md
-  LIBRARY_IMAGE: harbor.astera.sh/library/md-workflows
+  HARBOR_IMAGE: harbor.astera.sh/diffuse/md-workflows
 
 jobs:
   version:
@@ -141,13 +143,19 @@ jobs:
 
   actl:
     name: Build actl (consumable)
-    needs: [version, gromacs]
-    runs-on: [diffuse-sh-builder]
-    environment: harbor
+    needs: [version, base, gromacs]
+    runs-on: ubuntu-latest
+    environment: harbor-publish
     outputs:
       digest: ${{ steps.build.outputs.digest }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android /opt/hostedtoolcache/CodeQL || true
+          docker system prune -af || true
       - uses: docker/setup-buildx-action@v3
       - name: Login to Docker Hub (pull private gromacs intermediate)
         uses: docker/login-action@v3
@@ -155,12 +163,27 @@ jobs:
           registry: ${{ env.DOCKERHUB_REGISTRY }}
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Join tailnet
+        uses: tailscale/github-action@064b10558093f38325e838ddea35486bdc6b1d5c # v4.4.0
+        with:
+          oauth-client-id: ${{ vars.TS_CI_CLIENT_ID }}
+          audience: ${{ vars.TS_CI_AUDIENCE }}
+          tags: tag:ci-n
+      - name: Wait for Harbor
+        run: |
+          for _ in $(seq 1 12); do
+            curl -fsS --max-time 5 "https://${HARBOR_REGISTRY}/api/v2.0/ping" && exit 0
+            sleep 5
+          done
+          echo "::error::${HARBOR_REGISTRY} unreachable over the tailnet"; exit 1
       - name: Login to Harbor (push final image)
         uses: docker/login-action@v3
         with:
           registry: ${{ env.HARBOR_REGISTRY }}
           username: ${{ secrets.HARBOR_USERNAME }}
           password: ${{ secrets.HARBOR_PASSWORD }}
+      # Tags in the `diffuse` project are immutable: no moving tags (actl, latest, the bare
+      # semver), and no registry build cache. `build` (semver-b<run>) is unique per run.
       - id: build
         uses: docker/build-push-action@v6
         with:
@@ -172,16 +195,15 @@ jobs:
           build-args: |
             GROMACS_IMAGE=${{ env.DOCKERHUB_IMAGE }}@${{ needs.gromacs.outputs.digest }}
           tags: |
-            ${{ env.LIBRARY_IMAGE }}:${{ needs.version.outputs.semver }}
-            ${{ env.LIBRARY_IMAGE }}:${{ needs.version.outputs.build }}
-            ${{ env.LIBRARY_IMAGE }}:${{ needs.version.outputs.sha }}
-            ${{ env.LIBRARY_IMAGE }}:actl
-            ${{ env.LIBRARY_IMAGE }}:latest
-          cache-from: type=registry,ref=${{ env.LIBRARY_IMAGE }}:actl-buildcache
-          cache-to: type=registry,ref=${{ env.LIBRARY_IMAGE }}:actl-buildcache,mode=max
+            ${{ env.HARBOR_IMAGE }}:${{ needs.version.outputs.build }}
+            ${{ env.HARBOR_IMAGE }}:${{ needs.version.outputs.sha }}
       - name: Report digests
         run: |
-          echo "base    digest: ${{ needs.base.outputs.digest }}"  || true
+          echo "base    digest: ${{ needs.base.outputs.digest }}"
           echo "gromacs digest: ${{ needs.gromacs.outputs.digest }}"
           echo "actl    digest: ${{ steps.build.outputs.digest }}"
-          echo "Published ${{ env.LIBRARY_IMAGE }}:${{ needs.version.outputs.build }}"
+          {
+            echo "Published \`${{ env.HARBOR_IMAGE }}:${{ needs.version.outputs.build }}@${{ steps.build.outputs.digest }}\`"
+            echo
+            echo "actl catalog ref: \`${{ env.HARBOR_IMAGE }}:${{ needs.version.outputs.build }}@${{ steps.build.outputs.digest }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
