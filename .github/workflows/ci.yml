@@ -49,6 +49,28 @@ jobs:
         # Contract + CLI tests are gmx-free, so they run on the hosted runner.
         run: pytest -q
 
+  test-image-python:
+    name: Tests on the image's Python (3.10)
+    # The images run md_workflows on the lunus environment's Python, pinned to 3.10 in
+    # Dockerfile.base; 3.11+-only code passes the 3.12 job above and breaks the image.
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install package and test deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install '.[dev]'
+
+      - name: Run tests
+        run: pytest -q
+
   build-check:
     name: Dockerfile build checks (no push)
     runs-on: ubuntu-latest
