@@ -32,9 +32,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # ---------- install micromamba ----------
 # Install envs under /opt so shebangs (#!/opt/micromamba/...) match the runtime layout.
-# Pinned: micromamba 2.10's solver never finished resolving the environment below (2.5 h on
-# a hosted runner), while 2.8.1, the release current when this image last built cleanly,
-# solves it in minutes.
+# Pinned so the build does not change under us when micromamba releases.
 ARG MICROMAMBA_VERSION=2.8.1
 RUN mkdir -p /opt/micromamba \
     && curl -fsSL --retry 5 "https://micro.mamba.pm/api/micromamba/linux-64/${MICROMAMBA_VERSION}" \
@@ -46,6 +44,10 @@ ENV MAMBA_EXE=/opt/micromamba/bin/micromamba
 ENV PATH="/opt/micromamba/bin:${PATH}"
 
 # ---------- conda environment (inline of lunus.yaml) ----------
+# Every package is version-pinned. With dials, cctbx-base, mpi4py, awscli and friends left
+# open, micromamba (2.8.1 and 2.10 alike) never finished resolving against today's
+# conda-forge (killed after 87 min on a hosted runner); pinned, it solves in under 20 s.
+# The pins are the versions pixi resolves for the same spec on linux-64 (2026-11-23).
 # cmake is kept here (not removed in this stage) because Dockerfile.gromacs needs it to
 # build GROMACS; it is removed at the end of that downstream stage. scons is removed below
 # once lunus is built.
@@ -56,8 +58,8 @@ channels:
 dependencies:
   - python =3.10
   - ambertools =24.8
-  - dials
-  - cctbx-base
+  - dials =3.24.1
+  - cctbx-base =2025.12
   - nexusformat =2.0.2
   - pandas =2.2.3
   - scipy =1.14.1
@@ -72,16 +74,16 @@ dependencies:
   - xarray =2025.01.0
   - nexpy =2.0.1
   - scons =4.10.1
-  - git
-  - vim
-  - curl
+  - git =2.51.0
+  - vim =9.2.0785
+  - curl =8.18.0
   - scp =0.15.0
   - mdtraj =1.10.3
-  - openmpi <5
-  - mpi4py
-  - openssh
+  - openmpi =4.1.6
+  - mpi4py =4.1.2
+  - openssh =10.2p1
   - cmake =3.31.2
-  - awscli
+  - awscli =2.36.35
   - gnuplot =5.4.10
 YAML
 
@@ -134,7 +136,7 @@ apt-get install -y /tmp/chimerax.deb \
     && mkdir -p /home/dev/.config/ChimeraX
 
 # ---------- interactive shells & pager ----------
-# Kept out of the build-time list at the top so runtime additions don't invalidate the unpinned
+# Kept out of the build-time list at the top so runtime additions don't invalidate the
 # conda solve and ChimeraX fetch above. tcsh also provides /bin/csh (via update-alternatives).
 RUN apt-get update && apt-get install -y --no-install-recommends \
         less \
